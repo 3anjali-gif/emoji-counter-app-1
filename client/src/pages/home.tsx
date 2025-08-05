@@ -1,219 +1,252 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { GitHubAuth } from "@/components/github-auth";
-import { FileTree } from "@/components/file-tree";
-import { TestCaseSummary } from "@/components/test-case-summary";
-import { GeneratedCode } from "@/components/generated-code";
-import { Rocket, Bell, ChevronDown, Download } from "lucide-react";
-import { SiGithub } from "react-icons/si";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { SimpleAuth } from "@/components/simple-auth";
+import { EmojiAnalysis } from "@/components/emoji-analysis";
+import { EmojiHistory } from "@/components/emoji-history";
+import { EmojiPicker } from "@/components/emoji-picker";
+import { Smile, BarChart3, History, Sparkles, TrendingUp } from "lucide-react";
+import type { User, EmojiText, EmojiStats } from "@shared/schema";
 
 export default function Home() {
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
-  const [selectedRepository, setSelectedRepository] = useState<string | null>(null);
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
-  const [testFramework, setTestFramework] = useState<string>("jest");
-  const [currentGeneration, setCurrentGeneration] = useState<string | null>(null);
-  const [selectedTestCase, setSelectedTestCase] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [activeTab, setActiveTab] = useState<'analyze' | 'history'>('analyze');
+  const [textInput, setTextInput] = useState('');
+  const [titleInput, setTitleInput] = useState('');
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  // Get user ID from URL params (temporary auth solution)
+  // Get user ID from URL params
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const userId = urlParams.get('user');
     if (userId) {
-      setCurrentUser(userId);
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
+      // Fetch user data
+      fetch(`/api/user/${userId}`)
+        .then(res => res.json())
+        .then(userData => {
+          setCurrentUser(userData);
+          window.history.replaceState({}, document.title, window.location.pathname);
+        })
+        .catch(console.error);
     }
   }, []);
 
-  const { data: user } = useQuery({
-    queryKey: ['/api/user', currentUser],
-    enabled: !!currentUser,
+  const { data: emojiTexts } = useQuery({
+    queryKey: ['/api/user', currentUser?.id, 'emoji-texts'],
+    enabled: !!currentUser?.id,
   });
 
-  const { data: repositories } = useQuery({
-    queryKey: ['/api/user', currentUser, 'repositories'],
-    enabled: !!currentUser,
+  const { data: popularEmojis } = useQuery({
+    queryKey: ['/api/popular-emojis'],
   });
 
-  const { data: generation } = useQuery({
-    queryKey: ['/api/test-case-generation', currentGeneration],
-    enabled: !!currentGeneration,
-    refetchInterval: (data) => {
-      return data?.status === 'generating' ? 2000 : false;
+  const analyzeMutation = useMutation({
+    mutationFn: async (data: { userId: string; title: string; content: string }) => {
+      return apiRequest('POST', '/api/analyze-emoji', data);
+    },
+    onSuccess: (result) => {
+      setAnalysisResult(result);
+      queryClient.invalidateQueries({ queryKey: ['/api/user', currentUser?.id, 'emoji-texts'] });
+      toast({
+        title: "Analysis Complete!",
+        description: `Found ${result.stats.totalEmojis} emojis in your text`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Analysis Failed",
+        description: error.message || "Failed to analyze your text",
+        variant: "destructive",
+      });
     },
   });
 
-  const { data: generatedTestCases } = useQuery({
-    queryKey: ['/api/test-case-generation', currentGeneration, 'generated-tests'],
-    enabled: !!currentGeneration,
-  });
+  const handleAnalyze = () => {
+    if (!currentUser) return;
+    if (!textInput.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter some text to analyze",
+        variant: "destructive",
+      });
+      return;
+    }
 
-  if (!currentUser || !user) {
-    return <GitHubAuth onAuth={setCurrentUser} />;
+    setIsAnalyzing(true);
+    analyzeMutation.mutate({
+      userId: currentUser.id,
+      title: titleInput.trim() || `Analysis ${new Date().toLocaleDateString()}`,
+      content: textInput,
+    });
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    setTextInput(prev => prev + emoji);
+  };
+
+  if (!currentUser) {
+    return <SimpleAuth onAuth={setCurrentUser} />;
   }
 
-  const selectedRepo = repositories?.find((repo: any) => repo.id === selectedRepository);
-
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-r from-primary to-secondary rounded-lg flex items-center justify-center">
-                  <Rocket className="text-white text-sm" />
+                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <Smile className="text-white text-sm" />
                 </div>
-                <span className="text-xl font-bold text-gray-900">Workik AI</span>
+                <span className="text-xl font-bold text-gray-900">EmojiCounter</span>
               </div>
-              <span className="text-sm text-gray-500 hidden sm:inline">Test Case Generator</span>
+              <span className="text-sm text-gray-500 hidden sm:inline">Analyze your emoji usage</span>
             </div>
             
             <div className="flex items-center space-x-4">
-              <Button variant="ghost" size="sm">
-                <Bell className="h-4 w-4" />
+              <Button 
+                variant={activeTab === 'analyze' ? 'default' : 'ghost'} 
+                size="sm"
+                onClick={() => setActiveTab('analyze')}
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                Analyze
+              </Button>
+              <Button 
+                variant={activeTab === 'history' ? 'default' : 'ghost'} 
+                size="sm"
+                onClick={() => setActiveTab('history')}
+              >
+                <History className="h-4 w-4 mr-2" />
+                History
               </Button>
               <div className="flex items-center space-x-2 bg-gray-100 rounded-lg px-3 py-2">
-                <img 
-                  src={user.avatar || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-4.0.3&auto=format&fit=crop&w=40&h=40"} 
-                  alt="User avatar" 
-                  className="w-6 h-6 rounded-full" 
-                />
-                <span className="text-sm font-medium text-gray-700">{user.username}</span>
-                <ChevronDown className="text-xs text-gray-500" />
+                <div className="w-6 h-6 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full flex items-center justify-center">
+                  <span className="text-white text-xs font-bold">{currentUser.username[0].toUpperCase()}</span>
+                </div>
+                <span className="text-sm font-medium text-gray-700">{currentUser.username}</span>
               </div>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="flex h-screen bg-gray-50 pt-16">
-        {/* Sidebar */}
-        <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
-          {/* Repository Selection */}
-          <div className="p-6 border-b border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Repository</h2>
-              <SiGithub className="text-xl text-primary" />
-            </div>
-            
-            {selectedRepo ? (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                <div className="flex items-center space-x-2">
-                  <SiGithub className="text-green-600" />
-                  <span className="text-sm font-medium text-green-800">{selectedRepo.fullName}</span>
-                </div>
-                <div className="text-xs text-green-600 mt-1">
-                  Connected • {selectedRepo.private ? 'Private' : 'Public'}
-                </div>
-              </div>
-            ) : (
-              <Select value={selectedRepository || ""} onValueChange={setSelectedRepository}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a repository" />
-                </SelectTrigger>
-                <SelectContent>
-                  {repositories?.map((repo: any) => (
-                    <SelectItem key={repo.id} value={repo.id}>
-                      {repo.fullName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          {/* File Tree */}
-          {selectedRepository && (
-            <FileTree
-              repositoryId={selectedRepository}
-              selectedFiles={selectedFiles}
-              onSelectionChange={setSelectedFiles}
-            />
-          )}
-
-          {/* Generate Button */}
-          {selectedFiles.length > 0 && (
-            <div className="p-4 border-t border-gray-200">
-              <GenerateTestCasesButton
-                repositoryId={selectedRepository!}
-                selectedFiles={selectedFiles}
-                framework={testFramework}
-                userId={currentUser}
-                onGenerated={setCurrentGeneration}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Content Header */}
-          <div className="bg-white border-b border-gray-200 px-6 py-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Test Case Generation</h1>
-                <p className="text-sm text-gray-600 mt-1">AI-powered test cases for your selected files</p>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Select value={testFramework} onValueChange={setTestFramework}>
-                  <SelectTrigger className="w-48">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="jest">Jest (JavaScript)</SelectItem>
-                    <SelectItem value="pytest">PyTest (Python)</SelectItem>
-                    <SelectItem value="junit">JUnit (Java)</SelectItem>
-                    <SelectItem value="selenium">Selenium (E2E)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" className="flex items-center space-x-2">
-                  <Download className="h-4 w-4" />
-                  <span>Export All</span>
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Content Area */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {generation && (
-              <>
-                <TestCaseSummary
-                  generation={generation}
-                  onGenerateCode={setSelectedTestCase}
-                />
-                
-                {selectedTestCase && (
-                  <GeneratedCode
-                    testCaseId={selectedTestCase}
-                    repositoryId={selectedRepository!}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {activeTab === 'analyze' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Input Section */}
+            <div className="lg:col-span-2 space-y-6">
+              <Card className="shadow-lg border-0 bg-white/70 backdrop-blur-sm">
+                <CardHeader className="bg-gradient-to-r from-blue-50 to-purple-50 border-b">
+                  <CardTitle className="flex items-center space-x-2">
+                    <Sparkles className="h-5 w-5 text-blue-500" />
+                    <span>Enter Your Text</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-6 space-y-4">
+                  <Input
+                    placeholder="Give your analysis a title (optional)"
+                    value={titleInput}
+                    onChange={(e) => setTitleInput(e.target.value)}
+                    className="text-base"
                   />
-                )}
-              </>
-            )}
-            
-            {!generation && selectedFiles.length === 0 && (
-              <Card>
-                <CardContent className="p-12 text-center">
-                  <SiGithub className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    Select files to generate test cases
-                  </h3>
-                  <p className="text-gray-600">
-                    Choose a repository and select the files you want to generate test cases for.
-                  </p>
+                  <Textarea
+                    placeholder="Type or paste your text here... Add some emojis! 😊🎉✨"
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    className="min-h-[200px] text-base resize-none"
+                  />
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-500">
+                      {textInput.length} characters • {textInput.match(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F900}-\u{1F9FF}]/gu)?.length || 0} emojis detected
+                    </div>
+                    <Button 
+                      onClick={handleAnalyze}
+                      disabled={analyzeMutation.isPending || !textInput.trim()}
+                      className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
+                    >
+                      {analyzeMutation.isPending ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          <TrendingUp className="h-4 w-4 mr-2" />
+                          Analyze Emojis
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
-            )}
+
+              {/* Analysis Results */}
+              {analysisResult && (
+                <EmojiAnalysis 
+                  result={analysisResult}
+                  onNewAnalysis={() => {
+                    setTextInput('');
+                    setTitleInput('');
+                    setAnalysisResult(null);
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Sidebar */}
+            <div className="space-y-6">
+              <EmojiPicker 
+                popularEmojis={popularEmojis || []}
+                onEmojiSelect={handleEmojiSelect}
+              />
+              
+              <Card className="shadow-lg border-0 bg-white/70 backdrop-blur-sm">
+                <CardHeader className="bg-gradient-to-r from-green-50 to-blue-50 border-b">
+                  <CardTitle className="text-lg">Quick Tips</CardTitle>
+                </CardHeader>
+                <CardContent className="p-4">
+                  <div className="space-y-3 text-sm text-gray-600">
+                    <div className="flex items-start space-x-2">
+                      <Badge variant="outline" className="mt-0.5">💡</Badge>
+                      <span>Paste text from social media, messages, or documents</span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <Badge variant="outline" className="mt-0.5">📊</Badge>
+                      <span>Get detailed statistics about your emoji usage</span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <Badge variant="outline" className="mt-0.5">❤️</Badge>
+                      <span>Discover your emotional sentiment patterns</span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <Badge variant="outline" className="mt-0.5">📈</Badge>
+                      <span>Track your emoji history over time</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </div>
+        ) : (
+          <EmojiHistory 
+            emojiTexts={emojiTexts || []} 
+            currentUser={currentUser}
+            onAnalysisSelect={setAnalysisResult}
+          />
+        )}
       </div>
     </div>
   );

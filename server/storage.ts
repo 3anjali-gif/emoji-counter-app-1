@@ -1,59 +1,36 @@
 import { 
   type User, 
   type InsertUser,
-  type Repository,
-  type InsertRepository,
-  type TestCaseGeneration,
-  type InsertTestCaseGeneration,
-  type GeneratedTestCase,
-  type InsertGeneratedTestCase
+  type EmojiText,
+  type InsertEmojiText
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
   // User methods
   getUser(id: string): Promise<User | undefined>;
-  getUserByGithubId(githubId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
 
-  // Repository methods
-  getRepository(id: string): Promise<Repository | undefined>;
-  getRepositoriesByUserId(userId: string): Promise<Repository[]>;
-  getRepositoryByGithubId(githubId: string, userId: string): Promise<Repository | undefined>;
-  createRepository(repository: InsertRepository): Promise<Repository>;
-
-  // Test case generation methods
-  getTestCaseGeneration(id: string): Promise<TestCaseGeneration | undefined>;
-  getTestCaseGenerationsByUserId(userId: string): Promise<TestCaseGeneration[]>;
-  createTestCaseGeneration(generation: InsertTestCaseGeneration): Promise<TestCaseGeneration>;
-  updateTestCaseGeneration(id: string, updates: Partial<TestCaseGeneration>): Promise<TestCaseGeneration | undefined>;
-
-  // Generated test case methods
-  getGeneratedTestCase(id: string): Promise<GeneratedTestCase | undefined>;
-  getGeneratedTestCasesByGenerationId(generationId: string): Promise<GeneratedTestCase[]>;
-  createGeneratedTestCase(testCase: InsertGeneratedTestCase): Promise<GeneratedTestCase>;
+  // Emoji text methods
+  getEmojiText(id: string): Promise<EmojiText | undefined>;
+  getEmojiTextsByUserId(userId: string): Promise<EmojiText[]>;
+  createEmojiText(emojiText: InsertEmojiText): Promise<EmojiText>;
+  updateEmojiText(id: string, updates: Partial<EmojiText>): Promise<EmojiText | undefined>;
+  deleteEmojiText(id: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
   private users: Map<string, User>;
-  private repositories: Map<string, Repository>;
-  private testCaseGenerations: Map<string, TestCaseGeneration>;
-  private generatedTestCases: Map<string, GeneratedTestCase>;
+  private emojiTexts: Map<string, EmojiText>;
 
   constructor() {
     this.users = new Map();
-    this.repositories = new Map();
-    this.testCaseGenerations = new Map();
-    this.generatedTestCases = new Map();
+    this.emojiTexts = new Map();
   }
 
   async getUser(id: string): Promise<User | undefined> {
     return this.users.get(id);
-  }
-
-  async getUserByGithubId(githubId: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(user => user.githubId === githubId);
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
@@ -61,6 +38,8 @@ export class MemStorage implements IStorage {
     const user: User = { 
       ...insertUser, 
       id,
+      email: insertUser.email || null,
+      avatar: insertUser.avatar || null,
       createdAt: new Date()
     };
     this.users.set(id, user);
@@ -76,78 +55,37 @@ export class MemStorage implements IStorage {
     return updatedUser;
   }
 
-  async getRepository(id: string): Promise<Repository | undefined> {
-    return this.repositories.get(id);
+  async getEmojiText(id: string): Promise<EmojiText | undefined> {
+    return this.emojiTexts.get(id);
   }
 
-  async getRepositoriesByUserId(userId: string): Promise<Repository[]> {
-    return Array.from(this.repositories.values()).filter(repo => repo.userId === userId);
+  async getEmojiTextsByUserId(userId: string): Promise<EmojiText[]> {
+    return Array.from(this.emojiTexts.values()).filter(text => text.userId === userId);
   }
 
-  async getRepositoryByGithubId(githubId: string, userId: string): Promise<Repository | undefined> {
-    return Array.from(this.repositories.values()).find(
-      repo => repo.githubId === githubId && repo.userId === userId
-    );
-  }
-
-  async createRepository(insertRepository: InsertRepository): Promise<Repository> {
+  async createEmojiText(insertEmojiText: InsertEmojiText): Promise<EmojiText> {
     const id = randomUUID();
-    const repository: Repository = {
-      ...insertRepository,
+    const emojiText: EmojiText = {
+      ...insertEmojiText,
       id,
-      createdAt: new Date()
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
-    this.repositories.set(id, repository);
-    return repository;
+    this.emojiTexts.set(id, emojiText);
+    return emojiText;
   }
 
-  async getTestCaseGeneration(id: string): Promise<TestCaseGeneration | undefined> {
-    return this.testCaseGenerations.get(id);
+  async updateEmojiText(id: string, updates: Partial<EmojiText>): Promise<EmojiText | undefined> {
+    const emojiText = this.emojiTexts.get(id);
+    if (!emojiText) return undefined;
+
+    const updatedEmojiText = { ...emojiText, ...updates, updatedAt: new Date() };
+    this.emojiTexts.set(id, updatedEmojiText);
+    return updatedEmojiText;
   }
 
-  async getTestCaseGenerationsByUserId(userId: string): Promise<TestCaseGeneration[]> {
-    return Array.from(this.testCaseGenerations.values()).filter(gen => gen.userId === userId);
-  }
-
-  async createTestCaseGeneration(insertGeneration: InsertTestCaseGeneration): Promise<TestCaseGeneration> {
-    const id = randomUUID();
-    const generation: TestCaseGeneration = {
-      ...insertGeneration,
-      id,
-      createdAt: new Date()
-    };
-    this.testCaseGenerations.set(id, generation);
-    return generation;
-  }
-
-  async updateTestCaseGeneration(id: string, updates: Partial<TestCaseGeneration>): Promise<TestCaseGeneration | undefined> {
-    const generation = this.testCaseGenerations.get(id);
-    if (!generation) return undefined;
-
-    const updatedGeneration = { ...generation, ...updates };
-    this.testCaseGenerations.set(id, updatedGeneration);
-    return updatedGeneration;
-  }
-
-  async getGeneratedTestCase(id: string): Promise<GeneratedTestCase | undefined> {
-    return this.generatedTestCases.get(id);
-  }
-
-  async getGeneratedTestCasesByGenerationId(generationId: string): Promise<GeneratedTestCase[]> {
-    return Array.from(this.generatedTestCases.values()).filter(
-      testCase => testCase.generationId === generationId
-    );
-  }
-
-  async createGeneratedTestCase(insertTestCase: InsertGeneratedTestCase): Promise<GeneratedTestCase> {
-    const id = randomUUID();
-    const testCase: GeneratedTestCase = {
-      ...insertTestCase,
-      id,
-      createdAt: new Date()
-    };
-    this.generatedTestCases.set(id, testCase);
-    return testCase;
+  async deleteEmojiText(id: string): Promise<boolean> {
+    return this.emojiTexts.delete(id);
   }
 }
 

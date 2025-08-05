@@ -1,57 +1,34 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { githubService } from "./services/github";
-import { aiService } from "./services/ai";
-import { insertUserSchema, insertRepositorySchema, insertTestCaseGenerationSchema, insertGeneratedTestCaseSchema } from "@shared/schema";
+import { emojiService } from "./services/emoji";
+import { insertUserSchema, insertEmojiTextSchema } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // GitHub OAuth routes
-  app.get("/api/auth/github", (req, res) => {
-    const clientId = process.env.GITHUB_CLIENT_ID;
-    if (!clientId) {
-      return res.status(500).json({ error: "GitHub client ID not configured" });
-    }
-
-    const scope = "repo,user:email";
-    const redirectUri = process.env.GITHUB_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/auth/github/callback`;
-    
-    const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=${scope}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-    res.redirect(authUrl);
-  });
-
-  app.get("/api/auth/github/callback", async (req, res) => {
+  // Simple auth route - create/get user
+  app.post("/api/auth/simple", async (req, res) => {
     try {
-      const { code } = req.query;
-      if (!code || typeof code !== "string") {
-        return res.status(400).json({ error: "Authorization code required" });
+      const { username } = req.body;
+      if (!username || username.trim() === '') {
+        return res.status(400).json({ error: "Username is required" });
       }
 
-      const { accessToken, user: githubUser } = await githubService.exchangeCodeForToken(code);
-      
-      let user = await storage.getUserByGithubId(githubUser.id.toString());
-      
+      // For simplicity, we'll create a simple check mechanism
+      // In a real app, you'd have a proper user lookup system
+      let user: any = null;
+
       if (!user) {
         user = await storage.createUser({
-          username: githubUser.login,
-          githubId: githubUser.id.toString(),
-          githubToken: accessToken,
-          avatar: githubUser.avatar_url,
-          email: githubUser.email,
-        });
-      } else {
-        user = await storage.updateUser(user.id, {
-          githubToken: accessToken,
-          avatar: githubUser.avatar_url,
-          email: githubUser.email,
+          username: username.trim(),
+          email: null,
+          avatar: null
         });
       }
 
-      // In a real app, you'd set up session management here
-      res.redirect(`/?user=${user!.id}`);
+      res.json({ user });
     } catch (error) {
-      console.error("GitHub auth error:", error);
+      console.error("Simple auth error:", error);
       res.status(500).json({ error: "Authentication failed" });
     }
   });
@@ -63,300 +40,154 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      
-      // Don't send the GitHub token to the client
-      const { githubToken, ...safeUser } = user;
-      res.json(safeUser);
+      res.json(user);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch user" });
     }
   });
 
-  // Repository routes
-  app.get("/api/user/:userId/repositories", async (req, res) => {
+  // Emoji text routes
+  app.get("/api/user/:userId/emoji-texts", async (req, res) => {
     try {
-      const user = await storage.getUser(req.params.userId);
-      if (!user || !user.githubToken) {
-        return res.status(401).json({ error: "User not authenticated with GitHub" });
-      }
-
-      const repos = await githubService.getUserRepositories(user.githubToken);
-      
-      // Store repositories in our database
-      for (const repo of repos) {
-        const existingRepo = await storage.getRepositoryByGithubId(repo.id.toString(), user.id);
-        if (!existingRepo) {
-          await storage.createRepository({
-            userId: user.id,
-            githubId: repo.id.toString(),
-            name: repo.name,
-            fullName: repo.full_name,
-            private: repo.private,
-            defaultBranch: repo.default_branch,
-          });
-        }
-      }
-
-      const userRepos = await storage.getRepositoriesByUserId(user.id);
-      res.json(userRepos);
+      const emojiTexts = await storage.getEmojiTextsByUserId(req.params.userId);
+      res.json(emojiTexts);
     } catch (error) {
-      console.error("Repository fetch error:", error);
-      res.status(500).json({ error: "Failed to fetch repositories" });
+      res.status(500).json({ error: "Failed to fetch emoji texts" });
     }
   });
 
-  app.get("/api/repository/:repoId/files", async (req, res) => {
+  app.get("/api/emoji-text/:id", async (req, res) => {
     try {
-      const { path = "" } = req.query;
-      const repository = await storage.getRepository(req.params.repoId);
-      
-      if (!repository) {
-        return res.status(404).json({ error: "Repository not found" });
+      const emojiText = await storage.getEmojiText(req.params.id);
+      if (!emojiText) {
+        return res.status(404).json({ error: "Emoji text not found" });
       }
-
-      const user = await storage.getUser(repository.userId);
-      if (!user || !user.githubToken) {
-        return res.status(401).json({ error: "User not authenticated" });
-      }
-
-      const files = await githubService.getRepositoryContents(
-        user.githubToken,
-        repository.fullName,
-        typeof path === "string" ? path : "",
-        repository.defaultBranch || "main"
-      );
-
-      res.json(files);
+      res.json(emojiText);
     } catch (error) {
-      console.error("File fetch error:", error);
-      res.status(500).json({ error: "Failed to fetch files" });
+      res.status(500).json({ error: "Failed to fetch emoji text" });
     }
   });
 
-  app.get("/api/repository/:repoId/file-content", async (req, res) => {
+  app.post("/api/analyze-emoji", async (req, res) => {
     try {
-      const { path } = req.query;
-      if (!path || typeof path !== "string") {
-        return res.status(400).json({ error: "File path required" });
-      }
-
-      const repository = await storage.getRepository(req.params.repoId);
-      if (!repository) {
-        return res.status(404).json({ error: "Repository not found" });
-      }
-
-      const user = await storage.getUser(repository.userId);
-      if (!user || !user.githubToken) {
-        return res.status(401).json({ error: "User not authenticated" });
-      }
-
-      const content = await githubService.getFileContent(
-        user.githubToken,
-        repository.fullName,
-        path,
-        repository.defaultBranch || "main"
-      );
-
-      res.json({ content });
-    } catch (error) {
-      console.error("File content fetch error:", error);
-      res.status(500).json({ error: "Failed to fetch file content" });
-    }
-  });
-
-  // Test case generation routes
-  app.post("/api/generate-test-cases", async (req, res) => {
-    try {
-      const validatedData = insertTestCaseGenerationSchema.parse(req.body);
+      const validatedData = insertEmojiTextSchema.parse(req.body);
       
-      const generation = await storage.createTestCaseGeneration({
+      // Clean and process the text
+      const cleanedContent = emojiService.cleanText(validatedData.content);
+      
+      // Extract emojis and generate counts
+      const emojiCounts = emojiService.extractEmojis(cleanedContent);
+      const totalEmojis = Object.values(emojiCounts).reduce((sum, count) => sum + count, 0);
+      
+      // Generate statistics
+      const stats = emojiService.generateStats(emojiCounts);
+      
+      // Create emoji text record
+      const emojiText = await storage.createEmojiText({
         ...validatedData,
-        status: "generating"
+        content: cleanedContent,
+        emojiCounts: emojiCounts,
+        totalEmojis: totalEmojis
       });
 
-      // Start async generation process
-      generateTestCasesAsync(generation.id);
+      // Add additional analysis data
+      const sentiment = emojiService.analyzeSentiment(emojiCounts);
+      const insights = emojiService.generateInsights(stats);
 
-      res.json(generation);
+      res.json({
+        emojiText,
+        stats,
+        sentiment,
+        insights
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      console.error("Test case generation error:", error);
-      res.status(500).json({ error: "Failed to start test case generation" });
+      console.error("Emoji analysis error:", error);
+      res.status(500).json({ error: "Failed to analyze emoji text" });
     }
   });
 
-  app.get("/api/test-case-generation/:id", async (req, res) => {
+  app.put("/api/emoji-text/:id", async (req, res) => {
     try {
-      const generation = await storage.getTestCaseGeneration(req.params.id);
-      if (!generation) {
-        return res.status(404).json({ error: "Generation not found" });
-      }
-      res.json(generation);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch generation" });
-    }
-  });
-
-  app.post("/api/generate-test-code", async (req, res) => {
-    try {
-      const validatedData = insertGeneratedTestCaseSchema.parse(req.body);
+      const { title, content } = req.body;
       
-      const generation = await storage.getTestCaseGeneration(validatedData.generationId);
-      if (!generation) {
-        return res.status(404).json({ error: "Generation not found" });
+      if (!title && !content) {
+        return res.status(400).json({ error: "Title or content is required" });
       }
 
-      const repository = await storage.getRepository(generation.repositoryId);
-      if (!repository) {
-        return res.status(404).json({ error: "Repository not found" });
+      let updates: Partial<any> = {};
+      
+      if (title) updates.title = title;
+      
+      if (content) {
+        const cleanedContent = emojiService.cleanText(content);
+        const emojiCounts = emojiService.extractEmojis(cleanedContent);
+        const totalEmojis = Object.values(emojiCounts).reduce((sum, count) => sum + count, 0);
+        
+        updates.content = cleanedContent;
+        updates.emojiCounts = emojiCounts;
+        updates.totalEmojis = totalEmojis;
       }
 
-      const user = await storage.getUser(generation.userId);
-      if (!user || !user.githubToken) {
-        return res.status(401).json({ error: "User not authenticated" });
+      const updatedEmojiText = await storage.updateEmojiText(req.params.id, updates);
+      
+      if (!updatedEmojiText) {
+        return res.status(404).json({ error: "Emoji text not found" });
       }
 
-      // Get file contents for context
-      const fileContents = await Promise.all(
-        (generation.selectedFiles as string[]).map(async (filePath) => {
-          try {
-            const content = await githubService.getFileContent(
-              user.githubToken!,
-              repository.fullName,
-              filePath,
-              repository.defaultBranch || "main"
-            );
-            return { path: filePath, content };
-          } catch (error) {
-            console.error(`Failed to fetch content for ${filePath}:`, error);
-            return { path: filePath, content: "" };
-          }
-        })
-      );
+      // If content was updated, return new analysis
+      if (content) {
+        const stats = emojiService.generateStats(updatedEmojiText.emojiCounts as Record<string, number>);
+        const sentiment = emojiService.analyzeSentiment(updatedEmojiText.emojiCounts as Record<string, number>);
+        const insights = emojiService.generateInsights(stats);
 
-      const summaries = generation.summaries as any[];
-      const summary = summaries[parseInt(validatedData.summaryIndex)];
-
-      const generatedCode = await aiService.generateTestCode(
-        fileContents,
-        summary,
-        generation.framework
-      );
-
-      const testCase = await storage.createGeneratedTestCase({
-        ...validatedData,
-        code: generatedCode,
-      });
-
-      res.json(testCase);
+        res.json({
+          emojiText: updatedEmojiText,
+          stats,
+          sentiment,
+          insights
+        });
+      } else {
+        res.json({ emojiText: updatedEmojiText });
+      }
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
-      }
-      console.error("Test code generation error:", error);
-      res.status(500).json({ error: "Failed to generate test code" });
+      console.error("Update emoji text error:", error);
+      res.status(500).json({ error: "Failed to update emoji text" });
     }
   });
 
-  app.get("/api/test-case-generation/:generationId/generated-tests", async (req, res) => {
+  app.delete("/api/emoji-text/:id", async (req, res) => {
     try {
-      const testCases = await storage.getGeneratedTestCasesByGenerationId(req.params.generationId);
-      res.json(testCases);
+      const deleted = await storage.deleteEmojiText(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Emoji text not found" });
+      }
+      res.json({ success: true });
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch generated test cases" });
+      res.status(500).json({ error: "Failed to delete emoji text" });
     }
   });
 
-  // GitHub PR creation route (bonus feature)
-  app.post("/api/create-pr", async (req, res) => {
+  // Utility routes
+  app.get("/api/popular-emojis", (req, res) => {
     try {
-      const { repositoryId, testCaseId, branchName, title, description } = req.body;
-
-      const repository = await storage.getRepository(repositoryId);
-      if (!repository) {
-        return res.status(404).json({ error: "Repository not found" });
-      }
-
-      const user = await storage.getUser(repository.userId);
-      if (!user || !user.githubToken) {
-        return res.status(401).json({ error: "User not authenticated" });
-      }
-
-      const testCase = await storage.getGeneratedTestCase(testCaseId);
-      if (!testCase) {
-        return res.status(404).json({ error: "Test case not found" });
-      }
-
-      const pr = await githubService.createPullRequest(
-        user.githubToken,
-        repository.fullName,
-        {
-          title: title || `Add ${testCase.title}`,
-          description: description || `Generated test case: ${testCase.description}`,
-          branchName: branchName || `test-case-${testCase.id}`,
-          fileName: testCase.filename,
-          fileContent: testCase.code,
-          baseBranch: repository.defaultBranch || "main"
-        }
-      );
-
-      res.json(pr);
+      const popularEmojis = emojiService.getPopularEmojis();
+      res.json(popularEmojis);
     } catch (error) {
-      console.error("PR creation error:", error);
-      res.status(500).json({ error: "Failed to create pull request" });
+      res.status(500).json({ error: "Failed to get popular emojis" });
     }
   });
 
-  // Async function to generate test case summaries
-  async function generateTestCasesAsync(generationId: string) {
+  app.get("/api/emoji-categories", (req, res) => {
     try {
-      const generation = await storage.getTestCaseGeneration(generationId);
-      if (!generation) return;
-
-      const repository = await storage.getRepository(generation.repositoryId);
-      if (!repository) return;
-
-      const user = await storage.getUser(generation.userId);
-      if (!user || !user.githubToken) return;
-
-      // Get file contents
-      const fileContents = await Promise.all(
-        (generation.selectedFiles as string[]).map(async (filePath) => {
-          try {
-            const content = await githubService.getFileContent(
-              user.githubToken!,
-              repository.fullName,
-              filePath,
-              repository.defaultBranch || "main"
-            );
-            return { path: filePath, content };
-          } catch (error) {
-            console.error(`Failed to fetch content for ${filePath}:`, error);
-            return { path: filePath, content: "" };
-          }
-        })
-      );
-
-      // Generate test case summaries using AI
-      const summaries = await aiService.generateTestCaseSummaries(
-        fileContents,
-        generation.framework
-      );
-
-      // Update generation with summaries
-      await storage.updateTestCaseGeneration(generationId, {
-        summaries: summaries,
-        status: "completed"
-      });
+      const categories = emojiService.getEmojiCategories();
+      res.json(categories);
     } catch (error) {
-      console.error("Async test case generation error:", error);
-      await storage.updateTestCaseGeneration(generationId, {
-        status: "failed"
-      });
+      res.status(500).json({ error: "Failed to get emoji categories" });
     }
-  }
+  });
 
   const httpServer = createServer(app);
   return httpServer;
