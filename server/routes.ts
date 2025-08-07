@@ -2,8 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { emojiService } from "./services/emoji";
-import { insertUserSchema, insertEmojiTextSchema } from "@shared/schema";
-import { z } from "zod";
+import { insertUserSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Simple auth route - create/get user
@@ -70,10 +69,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/analyze-emoji", async (req, res) => {
     try {
-      const validatedData = insertEmojiTextSchema.parse(req.body);
+      console.log("Received data:", JSON.stringify(req.body, null, 2));
       
+      // Manual validation to avoid schema issues
+      const { userId, title, content } = req.body;
+      
+      if (!userId || !content) {
+        return res.status(400).json({ error: "userId and content are required" });
+      }
+
       // Clean and process the text
-      const cleanedContent = emojiService.cleanText(validatedData.content);
+      const cleanedContent = emojiService.cleanText(content);
       
       // Extract emojis and generate counts
       const emojiCounts = emojiService.extractEmojis(cleanedContent);
@@ -84,7 +90,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Create emoji text record
       const emojiText = await storage.createEmojiText({
-        ...validatedData,
+        userId,
+        title: title || `Analysis ${new Date().toLocaleDateString()}`,
         content: cleanedContent,
         emojiCounts: emojiCounts,
         totalEmojis: totalEmojis
@@ -101,11 +108,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         insights
       });
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
-      }
       console.error("Emoji analysis error:", error);
-      res.status(500).json({ error: "Failed to analyze emoji text" });
+      res.status(500).json({ error: "Failed to analyze emoji text", details: error.message });
     }
   });
 

@@ -31,6 +31,9 @@ export const insertEmojiTextSchema = createInsertSchema(emojiTexts).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  emojiCounts: z.record(z.number()).optional(),
+  totalEmojis: z.number().optional(),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
